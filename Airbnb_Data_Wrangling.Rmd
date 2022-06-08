@@ -1,0 +1,189 @@
+
+```{r}
+data = read.csv('C:/Users/josh1/Downloads/analysisData.csv')
+scoring = read.csv('C:/Users/josh1/Downloads/scoringData.csv')
+```
+
+### The Data Structure
+
+``` {r}
+dim(data)
+dim(scoring)
+str(data)
+```
+
+
+#### Convert Data Type
+
+In this part, some features data type have been changed so that they could be transformed or used in the feature engineering process. For example, the date should be date type, not factor. We should manual select the columns here without using the function. First, the date column.
+
+``` {r}
+data$host_since = as.Date(data$host_since)
+data$first_review = as.Date(data$first_review)
+data$last_review = as.Date(data$last_review)
+scoring$host_since = as.Date(scoring$host_since)
+scoring$first_review = as.Date(scoring$first_review)
+scoring$last_review = as.Date(scoring$last_review)
+```
+
+Then, the character columns.
+
+``` {r}
+data$summary = as.character(data$summary)
+data$description = as.character(data$description)
+data$transit = as.character(data$transit)
+data$host_about = as.character(data$host_about)
+data$amenities = as.character(data$amenities)
+data$host_verifications = as.character(data$host_verifications)
+data$space = as.character(data$space)
+data$neighborhood_overview = as.character(data$neighborhood_overview)
+scoring$summary = as.character(scoring$summary)
+scoring$description = as.character(scoring$description)
+scoring$transit = as.character(scoring$transit)
+scoring$host_about = as.character(scoring$host_about)
+scoring$amenities = as.character(scoring$amenities)
+scoring$host_verifications = as.character(scoring$host_verifications)
+scoring$space = as.character(scoring$space)
+scoring$neighborhood_overview = as.character(scoring$neighborhood_overview)
+```
+
+
+
+## Feature Selection
+
+I didn't run forward or backward stepwise to select the features. Instead, I implemented the feature engineering and built models based on business logic. For example, room_type and renters' neighbourhood might be important for predicting the price. However, the features like zipcode seems irrelevant.
+
+
+
+## Feature Engineering
+
+A few columns cannot be directly used in models and we should transformed them or create dummy variables. Also, we can create new variables based on current features.
+
+
+
+### Calculate Words For Character
+
+Columns like summary, description, and transit are character and we could calculate the total words for each of them using wordcount()-library(ngram) and create new features.
+
+``` {r, results = "hide"}
+library(ngram)
+library(dplyr)
+data = data %>%
+  rowwise() %>%
+  mutate(summary_wc = wordcount(summary),
+         description_wc = wordcount(description),
+         transit_wc = wordcount(transit),
+         host_about_wc = wordcount(host_about),
+         amenities_count = wordcount(amenities),
+         space_wc = wordcount(space),
+         neighborhood_overview_wc = wordcount(neighborhood_overview))
+scoring = scoring %>%
+  rowwise() %>%
+  mutate(summary_wc = wordcount(summary),
+         description_wc = wordcount(description),
+         transit_wc = wordcount(transit),
+         host_about_wc = wordcount(host_about),
+         amenities_count = wordcount(amenities),
+         space_wc = wordcount(space),
+         neighborhood_overview_wc = wordcount(neighborhood_overview))
+```
+
+
+
+
+
+
+### Create Dummy Variables For Character
+
+Amenities and host_verifications stringr and qdapTools in this step.
+
+``` {r, result = "hide", message = FALSE}
+library(stringr)
+library(qdapTools)
+```
+
+Based on my research and understanding, it was clear that I had to work with the Amenities column, so restructuring was converting 
+Amenities into new columns for each creating 1's and 0's was the best option
+
+``` {r}
+## Removing Irrelevant signs from the columns
+data$amenities = gsub("\\.", "", data$amenities)  ## remove the dot sign 
+data$amenities = data$amenities %>% stringr::str_replace_all("\\s", "")   ## remove the space
+data$amenities = noquote(data$amenities)   ##  remove quotation sign
+## Second split the column and create dummy variables
+data = cbind(data,mtabulate(strsplit(as.character(data$amenities), ',')))
+## Check if it works
+head(data$amenities, 3)
+### we could also use colnames(data)
+```
+
+Next on the *host_verifications* column.
+
+``` {r}
+## First, remove other signs in the column like [, ], . 
+data$host_verifications = gsub("\\[", "", data$host_verifications) 
+data$host_verifications = gsub("\\]", "", data$host_verifications) 
+data$host_verifications = gsub("\\'", "", data$host_verifications) 
+data$host_verifications = data$host_verifications %>% stringr::str_replace_all("\\s", "") ## remove the space
+data$host_verifications = noquote(data$host_verifications) ##  remove quotation sign
+## Create dummy variables
+data = cbind(data, mtabulate(strsplit(as.character(data$host_verifications), split = ','))) 
+## calculate the wordcount for the text column chosen ###
+data$host_identity_verified = as.character(data$host_identity_verified)
+data = data %>%
+    rowwise() %>%
+    mutate(verification_count = wordcount(host_identity_verified))
+## Check if it works
+head(data$host_verifications, 3)
+```
+
+Finally, we do the same in scoring dataset.
+
+``` {r, result = "hide"}
+## First, the amenities column
+scoring$amenities = gsub("\\.", "", scoring$amenities)  
+scoring$amenities = scoring$amenities %>% stringr::str_replace_all("\\s", "")   
+scoring$amenities = noquote(scoring$amenities)  
+scoring = cbind(scoring,mtabulate(strsplit(as.character(scoring$amenities), ',')))
+## Next this was done for the host_identifications column
+scoring$host_verifications = gsub("\\[", "", scoring$host_verifications)
+scoring$host_verifications = gsub("\\]", "", scoring$host_verifications)
+scoring$host_verifications = gsub("\\'", "", scoring$host_verifications)
+scoring$host_verifications = scoring$host_verifications %>% stringr::str_replace_all("\\s", "")
+scoring$host_verifications = noquote(scoring$host_verifications)
+scoring = cbind(scoring, mtabulate(strsplit(as.character(scoring$host_verifications), split = ',')))
+scoring$host_identity_verified = as.character(scoring$host_identity_verified)
+scoring = scoring %>%
+    rowwise() %>%
+    mutate(verification_count = wordcount(host_identity_verified))
+```
+
+Note Most Variables were had different spellings, which were changed
+
+``` {r, result = "hide"}
+colnames(data)[which(colnames(data) == '24-hourcheck-in')] = 'check_in_24'
+colnames(data)[which(colnames(data) == 'Cat(s)')] = 'cat'
+colnames(data)[which(colnames(data) == 'Dog(s)')] = 'dog'
+colnames(data)[which(colnames(data) == 'Otherpet(s)')] = 'otherpet'
+colnames(data)[which(colnames(data) == 'Washer/Dryer')] = 'Washer_and_Dryer'
+colnames(data)[which(colnames(data) == 'Selfcheck-in')] = 'Selfcheck_in'
+colnames(data)[which(colnames(data) == 'Family/kidfriendly')] = 'Family_and_kidfriendly'
+colnames(scoring)[which(colnames(scoring) == '24-hourcheck-in')] = 'check_in_24'
+colnames(scoring)[which(colnames(scoring) == 'Cat(s)')] = 'cat'
+colnames(scoring)[which(colnames(scoring) == 'Dog(s)')] = 'dog'
+colnames(scoring)[which(colnames(scoring) == 'Otherpet(s)')] = 'otherpet'
+colnames(scoring)[which(colnames(scoring) == 'Washer/Dryer')] = 'Washer_and_Dryer'
+colnames(scoring)[which(colnames(scoring) == 'Selfcheck-in')] = 'Selfcheck_in'
+colnames(scoring)[which(colnames(scoring) == 'Family/kidfriendly')] = 'Family_and_kidfriendly'
+```
+
+Writing the new data to an excel just for verification purposes,
+```{r}
+write.csv(data, "C:/Users/josh1/Downloads/analysisData_ame.csv")
+write.csv(scoring, "C:/Users/josh1/Downloads/scoring_ame.csv")
+
+```
+
+Missing Data to be treated
+
+

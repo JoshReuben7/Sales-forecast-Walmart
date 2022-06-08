@@ -1,0 +1,613 @@
+```{r}
+library(caTools)
+library(caret)
+library(tidyr); library(dplyr)
+library(tidyr);library(tidyverse);library(forecast);library(forcats);library(stringr)
+nn <- read.csv("C:/Users/josh1/Downloads/Touch2.csv")
+nn
+airbnb <- nn
+summary(nn)
+names(nn)
+
+names(nn)
+
+```
+
+```{r, result = "hide"}
+library(tidyverse)
+library(ggthemes)
+library(GGally)
+library(ggExtra)
+library(caret)
+library(glmnet)
+library(corrplot)
+library(leaflet)
+library(kableExtra)
+library(RColorBrewer)
+library(plotly)
+```
+
+```{r}
+th <- theme_fivethirtyeight() + theme(axis.title = element_text(), axis.title.x = element_text()) # global theme for ggplot2 objects
+set.seed(252)
+airbnb <- read.csv("C:/Users/josh1/Downloads/Touch3.csv", 
+                   encoding="UTF-8", stringsAsFactors = F, na.strings = c(""))
+```
+
+```{r}
+head(airbnb) %>% kable() %>% kable_styling()
+```
+
+```{r}
+names_to_factor <- c("host_name", "neighbourhood_group", "neighbourhood", "room_type")
+airbnb[names_to_factor] <- map(airbnb[names_to_factor], as.factor)
+airbnb$host_name <-as.factor(airbnb$host_name)
+airbnb$neighbourhood_group <-as.factor(airbnb$neighbourhood_group)
+airbnb$neighbourhood <-as.factor(airbnb$neighbourhood)
+airbnb$room_type <-as.factor(airbnb$room_type)
+class(airbnb$room_type)
+```
+
+```{r}
+airbnb[c("last_review")] <- airbnb[c("last_review")] %>% map(~lubridate::ymd(.x))
+```
+
+```{r, result = "hide"}
+glimpse(airbnb)
+```
+```{r}
+missing_airbnb <- airbnb %>% summarise_all(~(sum(is.na(.))/n()))
+missing_airbnb <- gather(missing_airbnb, key = "variables", value = "percent_missing")
+missing_airbnb <- missing_airbnb[missing_airbnb$percent_missing > 0.0, ] 
+ggplot(missing_airbnb, aes(x = reorder(variables, percent_missing), y = percent_missing)) +
+geom_bar(stat = "identity", fill = "red", aes(color = I('white')), size = 0.3)+
+xlab('variables')+
+coord_flip() + 
+th  +
+  ggtitle("Missing Data") +
+  xlab("Column name") +
+  ylab("Percentage missing") +
+  annotate("text", x = 1.5, y = 0.1,label = "host_name and name have less than 0.001\n percentage missing", color = "slateblue", size = 5)
+```
+```{r}
+ggplot(airbnb, aes(price)) +
+  geom_histogram(bins = 30, aes(y = ..density..), fill = "purple") + 
+  geom_density(alpha = 0.2, fill = "purple") +
+  th +
+  ggtitle("Distribution of price",
+          subtitle = "The distribution is very skewed") +
+  theme(axis.title = element_text(), axis.title.x = element_text()) +
+  geom_vline(xintercept = round(mean(airbnb$price), 2), size = 2, linetype = 3)
+```
+```{r}
+ggplot(airbnb, aes(price)) +
+  geom_histogram(bins = 30, aes(y = ..density..), fill = "purple") + 
+  geom_density(alpha = 0.2, fill = "purple") +
+  th +
+  ggtitle("Transformed distribution of price",
+          subtitle = expression("With" ~'log'[10] ~ "transformation of x-axis")) +
+  #theme(axis.title = element_text(), axis.title.x = element_text()) +
+  geom_vline(xintercept = round(mean(airbnb$price), 2), size = 2, linetype = 3) +
+  scale_x_log10() +
+  annotate("text", x = 1800, y = 0.75,label = paste("Mean price = ", paste0(round(mean(airbnb$price), 2), "$")),
+           color =  "#32CD32", size = 8)
+
+```
+```{r}
+airbnb_nh <- airbnb %>%
+  group_by(neighbourhood_group) %>%
+  summarise(price = round(mean(price), 2))
+
+
+ggplot(airbnb, aes(price)) +
+  geom_histogram(bins = 30, aes(y = ..density..), fill = "purple") + 
+  geom_density(alpha = 0.2, fill = "purple") +
+  th +
+  ggtitle("Transformed distribution of price\n by neighbourhood groups",
+          subtitle = expression("With" ~'log'[10] ~ "transformation of x-axis")) +
+  geom_vline(data = airbnb_nh, aes(xintercept = price), size = 2, linetype = 3) +
+  geom_text(data = airbnb_nh,y = 1.5, aes(x = price + 1400, label = paste("Mean  = ",price)), color = "darkgreen", size = 4) +
+  facet_wrap(~neighbourhood_group) +
+  scale_x_log10() 
+```
+
+```{r}
+airbnb %>% filter(price >= mean(price)) %>% group_by(neighbourhood_group, room_type) %>% tally %>% 
+  ggplot(aes(reorder(neighbourhood_group,desc(n)), n, fill = room_type)) +
+  th +
+  xlab(NULL) +
+  ylab("Number of objects") +
+  ggtitle("Number of above average price objects",
+          subtitle = "Most of them are entire homes or apartments") +
+           geom_bar(stat = "identity")
+```
+```{r}
+ggplot(airbnb, aes(x = room_type, y = price)) +
+  geom_boxplot(aes(fill = room_type)) + scale_y_log10() +
+  th + 
+  xlab("Room type") + 
+  ylab("Price") +
+  ggtitle("Boxplots of price by room type",
+          subtitle = "Entire homes and apartments have the highest avg price") +
+  geom_hline(yintercept = mean(airbnb$price), color = "purple", linetype = 2)
+```
+```{r}
+ggplot(airbnb, aes(x = property_type, y = price)) +
+  geom_boxplot(aes(fill = property_type)) + scale_y_log10() +
+  th + 
+  xlab("Property Type") + 
+  ylab("Price") +
+  ggtitle("Boxplots of price by Property type",
+          subtitle = "Entire homes and apartments have the highest avg price") +
+  geom_hline(yintercept = mean(airbnb$price), color = "purple", linetype = 2)
+```
+
+```{r}
+data %>%
+  ggplot(aes(price, fill = neighbourhood_group_cleansed)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) +
+  scale_x_log10(labels = scales::dollar_format()) +
+  labs(fill = NULL, x = "price per night")
+```
+```{r}
+ data %>%
+  ggplot(aes(price, fill = host_since_lev)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) +
+  scale_x_log10(labels = scales::dollar_format()) +
+  labs(fill = NULL, x = "price per night")
+```
+```{r}
+data %>%
+  ggplot(aes(price, fill = neighbourhood_group_cleansed)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) +
+  scale_x_log10(labels = scales::dollar_format()) +
+  labs(fill = NULL, x = "price per night")
+```
+
+```{r}
+data %>%
+  ggplot(aes(price, fill = room_type)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 20) +
+  scale_x_log10(labels = scales::dollar_format()) +
+  labs(fill = NULL, x = "price per night")
+```
+
+```{r}
+airbnb %>% arrange(desc(price)) %>% top_n(10) %>% select(- host_name, -name) %>%  
+  ggplot(aes(x = price, fill = neighbourhood_group)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() + 
+  ggtitle("Summary of price distributions") +
+  facet_wrap(~room_type + neighbourhood_group)
+```
+```{r}
+ggplot(airbnb, aes(availability_365, price)) +
+  th +
+  geom_point(alpha = 0.2, color = "slateblue") +
+  geom_density(stat = "identity", alpha = 0.2) +
+  xlab("Availability during year") +
+  ylab("Price") +
+  ggtitle("Relationship between availability",
+          subtitle = "there is not clear relationship")
+```
+```{r}
+ggplot(airbnb, aes(number_of_reviews, price)) +
+  th + theme(axis.title = element_text(), axis.title.x = element_text()) +
+  geom_point(aes(size = price), alpha = 0.05, color = "slateblue") +
+  xlab("Number of reviews") +
+  ylab("Price") +
+  ggtitle("Relationship between number of reviews",
+          subtitle = "The most expensive objects have small number of reviews (or 0)")
+```
+
+```{r}
+airbnb %>% group_by(neighbourhood_group) %>% tally() %>% 
+  ggplot(aes(x = reorder(neighbourhood_group, n), n)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  theme_fivethirtyeight() +
+  ggtitle("Number of objects by neighbourhood group") +
+  geom_text(aes(x = neighbourhood_group, y = 1, label = paste0(n),
+                colour = ifelse(neighbourhood_group %in%
+                                                              c("Manhattan", "Brooklyn", 
+                                                                "Queens"), '1', '2')),
+            hjust=-1.5, vjust=.5, size = 4, 
+            fontface = 'bold') +
+  coord_flip() +
+  scale_color_manual(values=c("white","black"), guide = F)
+```
+
+```{r}
+airbnb <- airbnb %>% mutate(id = row_number())
+airbnb_train <- airbnb %>% sample_frac(.7) %>% filter(price > 0)
+airbnb_test  <- anti_join(airbnb, airbnb_train, by = 'id') %>% filter(price > 0)
+
+# sanity check
+nrow(airbnb_train) + nrow(airbnb_test) == nrow(airbnb %>% filter(price > 0))
+```
+```{r}
+first_model <- train(price ~  room_type + minimum_nights  + availability_365 + neighbourhood_group, data = airbnb_train, method = "lm")
+summary(first_model)
+```
+```{r}
+plot(first_model$finalModel)
+```
+```{r}
+airbnb$neighbourhood_group = fct_lump(f = airbnb$neighbourhood_group,prop = 0.1)
+table(airbnb$neighbourhood_group)
+```
+
+
+
+
+#SECOND part of the Analysis
+
+```{r, result = "hide"}
+library(gbm)
+library(xgboost)
+library(lightgbm)
+library(tidyverse)
+library(ggthemes)
+library(GGally)
+library(ggExtra)
+library(caret)
+library(glmnet)
+library(corrplot)
+library(leaflet)
+library(kableExtra)
+library(RColorBrewer)
+library(plotly)
+```
+
+```{r}
+library(caTools)
+library(caret)
+library(tidyr);library(tidyverse);library(forecast);library(forcats)
+data1 <- read.csv("C:/Users/josh1/Downloads/analysisData_ame.csv")
+data1
+scoring1 <- read.csv("C:/Users/josh1/Downloads/scoring_ame.csv")
+glimpse(scoring1)
+data2 <-data1 
+scoring2 <- scoring1
+```
+Understanding the CLass of all the Variables
+```{r}
+sapply(data, class)
+
+```
+
+#IMPUTATION OF MISSING VARIABLES
+
+
+```{r}
+
+#imputation first
+
+library(mice)
+impD <- mice(data = data2, m =5, method = 'rf')
+summary(impD)
+data <- complete(impD,3)
+
+
+library(mice)
+impDsc <- mice(data = scoring2, m =5, method = 'rf')
+summary(impDsc)
+scoring <- complete(impDsc,3)
+glimpse(scoring)
+glimpse(data)
+names(data)
+
+
+#library(Amelia)
+#missmap(data2)
+
+```
+## Removing the non numerical Columns to run the predictions
+This was done espicially for the XGboost model because using the 
+DATA filter method ran into a bug
+```{r}
+data = subset(data, select = -c(host_response_time,Ski.in.Ski.out,
+                                host_response_rate,
+                                zipcode_a,
+                                neighbourhood_a,
+                                Ceilinghoist,Kitchenette))
+
+
+scoring1 = subset(scoring1, select = -c(host_response_time,Ski.in.Ski.out,
+                                host_response_rate,
+                                zipcode_a,
+                                neighbourhood_a,
+                                Ceilinghoist,Kitchenette))
+```
+## Using the Regression model 
+though the method seem to give multi colinearity
+the rmse generated through these predictors was 
+lesser, just by using more numeric variables
+```{r}
+model = lm(price~
++host_total_listings_count
++room_type_a
++bathrooms
++beds
++monthly_price
++cleaning_fee
++maximum_nights
++maximum_minimum_nights
++maximum_maximum_nights
++maximum_nights_avg_ntm
++availability_60
++availability_365
++number_of_reviews_ltm
++last_review
++review_scores_accuracy
++review_scores_checkin
++review_scores_location
++calculated_host_listings_count
++calculated_host_listings_count_private_rooms
++reviews_per_month
++host_listings_count
++Air
++accommodates
++bedrooms
++square_feet
++weekly_price
++security_deposit
++guests_included
++minimum_nights
++minimum_minimum_nights
++minimum_maximum_nights
++minimum_nights_avg_ntm
++availability_30
++availability_90
++number_of_reviews
++first_review
++review_scores_rating
++review_scores_cleanliness
++review_scores_communication
++review_scores_value
++calculated_host_listings_count_entire_homes
++calculated_host_listings_count_shared_rooms
+,data = firstrf)
+summary(model)
+pred = predict(model, newdata = firstrfsc)
+pred
+rmse5 = sqrt(mean((pred - data1$price)^2))
+rmse5
+```
+## For furthering better results
+there was more DATA wrangling required
+
+```{r}
+data = read.csv('C:/Users/josh1/Downloads/analysisData.csv')
+scoring = read.csv('C:/Users/josh1/Downloads/scoringData.csv')
+```
+
+### The Data Structure
+
+``` {r}
+dim(data)
+dim(scoring)
+str(data)
+```
+
+```{r}
+data$space = as.character(data$space)
+data$host_verifications = as.character(data$host_verifications)
+data$summary = as.character(data$summary)
+data$description = as.character(data$description)
+data$transit = as.character(data$transit)
+data$host_about = as.character(data$host_about)
+data$amenities = as.character(data$amenities)
+data$neighborhood_overview = as.character(data$neighborhood_overview)
+##PERFORM THE SAME FOR SCORING DATA
+scoring$summary = as.character(scoring$summary)
+scoring$amenities = as.character(scoring$amenities)
+scoring$host_verifications = as.character(scoring$host_verifications)
+scoring$transit = as.character(scoring$transit)
+scoring$host_about = as.character(scoring$host_about)
+scoring$description = as.character(scoring$description)
+
+scoring$space = as.character(scoring$space)
+scoring$neighborhood_overview = as.character(scoring$neighborhood_overview)
+```
+
+``` {r, results = "hide"}
+library(ngram)
+library(dplyr)
+data = data %>%
+  rowwise() %>%
+  mutate(summary_wc = wordcount(summary),
+         description_wc = wordcount(description),
+         transit_wc = wordcount(transit),
+         host_about_wc = wordcount(host_about),
+         amenities_count = wordcount(amenities),
+         space_wc = wordcount(space),
+         neighborhood_overview_wc = wordcount(neighborhood_overview))
+scoring = scoring %>%
+  rowwise() %>%
+  mutate(summary_wc = wordcount(summary),
+         description_wc = wordcount(description),
+         transit_wc = wordcount(transit),
+         host_about_wc = wordcount(host_about),
+         amenities_count = wordcount(amenities),
+         space_wc = wordcount(space),
+         neighborhood_overview_wc = wordcount(neighborhood_overview))
+```
+
+Based on my research and understanding, it was clear that I had to work with the Amenities column, so restructuring was converting 
+Amenities into new columns for each creating 1's and 0's was the best option
+
+``` {r}
+## Removing Irrelevant signs from the columns
+data$amenities = gsub("\\.", "", data$amenities)  ## remove the dot sign 
+data$amenities = data$amenities %>% stringr::str_replace_all("\\s", "")   ## remove the space
+data$amenities = noquote(data$amenities)   ##  remove quotation sign
+## Second split the column and create dummy variables
+data = cbind(data,mtabulate(strsplit(as.character(data$amenities), ',')))
+## Check if it works
+head(data$amenities, 3)
+### we could also use colnames(data)
+```
+
+
+
+``` {r}
+## First, remove other signs in the column like [, ], . 
+data$host_verifications = gsub("\\[", "", data$host_verifications) 
+data$host_verifications = gsub("\\]", "", data$host_verifications) 
+data$host_verifications = gsub("\\'", "", data$host_verifications) 
+data$host_verifications = data$host_verifications %>% stringr::str_replace_all("\\s", "") ## remove the space
+data$host_verifications = noquote(data$host_verifications) ##  remove quotation sign
+## Create dummy variables
+data = cbind(data, mtabulate(strsplit(as.character(data$host_verifications), split = ','))) 
+## calculate the wordcount for the text column chosen ###
+data$host_identity_verified = as.character(data$host_identity_verified)
+data = data %>%
+    rowwise() %>%
+    mutate(verification_count = wordcount(host_identity_verified))
+## Check if it works
+head(data$host_verifications, 3)
+```
+
+
+``` {r}
+## First, remove other signs in the column like [, ], . 
+data$host_verifications = gsub("\\[", "", data$host_verifications) 
+data$host_verifications = gsub("\\]", "", data$host_verifications) 
+data$host_verifications = gsub("\\'", "", data$host_verifications) 
+data$host_verifications = data$host_verifications %>% stringr::str_replace_all("\\s", "") ## remove the space
+data$host_verifications = noquote(data$host_verifications) ##  remove quotation sign
+## Create dummy variables
+data = cbind(data, mtabulate(strsplit(as.character(data$host_verifications), split = ','))) 
+## calculate the wordcount for the text column chosen ###
+data$host_identity_verified = as.character(data$host_identity_verified)
+data = data %>%
+    rowwise() %>%
+    mutate(verification_count = wordcount(host_identity_verified))
+## Check if it works
+head(data$host_verifications, 3)
+```
+
+Finally, we do the same in scoring dataset.
+
+``` {r, result = "hide"}
+## First, the amenities column
+scoring$amenities = gsub("\\.", "", scoring$amenities)  
+scoring$amenities = scoring$amenities %>% stringr::str_replace_all("\\s", "")   
+scoring$amenities = noquote(scoring$amenities)  
+scoring = cbind(scoring,mtabulate(strsplit(as.character(scoring$amenities), ',')))
+## Next this was done for the host_identifications column
+scoring$host_verifications = gsub("\\[", "", scoring$host_verifications)
+scoring$host_verifications = gsub("\\]", "", scoring$host_verifications)
+scoring$host_verifications = gsub("\\'", "", scoring$host_verifications)
+scoring$host_verifications = scoring$host_verifications %>% stringr::str_replace_all("\\s", "")
+scoring$host_verifications = noquote(scoring$host_verifications)
+scoring = cbind(scoring, mtabulate(strsplit(as.character(scoring$host_verifications), split = ',')))
+scoring$host_identity_verified = as.character(scoring$host_identity_verified)
+scoring = scoring %>%
+    rowwise() %>%
+    mutate(verification_count = wordcount(host_identity_verified))
+```
+
+Note Most Variables were had different spellings, which were changed
+
+``` {r, result = "hide"}
+colnames(data)[which(colnames(data) == '24-hourcheck-in')] = 'check_in_24'
+colnames(data)[which(colnames(data) == 'Cat(s)')] = 'cat'
+colnames(data)[which(colnames(data) == 'Dog(s)')] = 'dog'
+colnames(data)[which(colnames(data) == 'Otherpet(s)')] = 'otherpet'
+colnames(data)[which(colnames(data) == 'Washer/Dryer')] = 'Washer_and_Dryer'
+colnames(data)[which(colnames(data) == 'Selfcheck-in')] = 'Selfcheck_in'
+colnames(data)[which(colnames(data) == 'Family/kidfriendly')] = 'Family_and_kidfriendly'
+colnames(scoring)[which(colnames(scoring) == '24-hourcheck-in')] = 'check_in_24'
+colnames(scoring)[which(colnames(scoring) == 'Cat(s)')] = 'cat'
+colnames(scoring)[which(colnames(scoring) == 'Dog(s)')] = 'dog'
+colnames(scoring)[which(colnames(scoring) == 'Otherpet(s)')] = 'otherpet'
+colnames(scoring)[which(colnames(scoring) == 'Washer/Dryer')] = 'Washer_and_Dryer'
+colnames(scoring)[which(colnames(scoring) == 'Selfcheck-in')] = 'Selfcheck_in'
+colnames(scoring)[which(colnames(scoring) == 'Family/kidfriendly')] = 'Family_and_kidfriendly'
+```
+
+Writing the new data to an excel just for verification purposes,
+```{r}
+write.csv(data, "C:/Users/josh1/Downloads/analysisData_ame.csv")
+write.csv(scoring, "C:/Users/josh1/Downloads/scoring_ame.csv")
+
+```
+
+FInding Variables of Importance
+
+```{r}
+library(rpart)
+library(rpart.plot)
+tree2 = rpart(price~., data = data, method = 'anova')
+tree2$variable.importance
+```
+## DROPING THESE Variables and running the code on multiple iterations gives shows us the rank order of the variables based on trees.
+
+
+##RUNNING FOREST RANGER with 10000 trees still did not give me a very successful RMSE
+```{r}
+library(ranger)
+set.seed(1031)
+forest_ranger = ranger(price~.,
+                       data = data, 
+                       num.trees = 10000)
+
+
+pred = predict(forest_ranger, data = scoring, num.trees = 10000)
+rmse_forest_ranger = sqrt(mean((pred$predictions - data$price)^2)); rmse_forest_ranger
+```
+After Converting all DATA into to numeric values and runnin it though trees it still did
+not give a good rmse
+```{r}
+
+
+library(rpart)
+library(rpart.plot)
+tree5 = rpart(price~.
+
+
+     , data ,method = 'anova', control = rpart.control(cp=-0.01))
+summary(tree5)
+ pred6 = predict(tree5, newdata = scoring)
+rmse_tree6 = sqrt(mean((pred6 - data$price)^2)); rmse_tree6
+
+mean(pred6,na.rm = TRUE)
+sum(is.na(pred6))
+joy1 <- pred6
+write.csv(joy1, "C:/Users/josh1/Downloads/submission_new_tree_joy1.csv")
+
+submission3 = data.frame(id = scoring$id, pred6)
+View(pred4)
+mean(pred5$price ,na.rm = TRUE)
+
+submission_file = write.csv(x= submission3,
+                          file = 'C:/Users/josh1/Downloads/submission_new_joy1.csv' ,
+                           row.names = F)
+
+#mean(pred4,na.rm = TRUE)
+#sum(is.na(pred4))
+#View(pred4)
+```
+
+Using Specific Predictors after Analysis gave a much cleaner result
+```{r}
+library(rpart)
+library(rpart.plot)
+tree5 = rpart(price~room_type_a +calculated_host_listings_count_entire_homes + calculated_host_listings_count_private_rooms+  accommodates + cleaning_fee+bathrooms+weekly_price+neighbourhood_group_cleansed_price +bedrooms +  beds +  property_type_price  +guests_included + property_type_a + Freestreetparking + Elevator + Privateentrance  +  review_scores_location +host_listings_count+calculated_host_listings_count +  reviews_per_month + square_feet + Airconditioning + Dryer + Elevator + Family_and_kidfriendly + Freestreetparking + Hairdryer + Hangers + Iron + Laptopfriendlyworkspace + Kitchen+ Lockonbedroomdoor + Refrigerator + Shampoo+ Selfcheck_in + Stove  + TV + kba +jumio+first_review_a+last_review_a+room_type_a+calculated_host_listings_count_entire_homes+maximum_nights+maximum_minimum_nights+maximum_maximum_nights+maximum_nights_avg_ntm+availability_60+availability_365+number_of_reviews_ltm+last_review_a+review_scores_accuracy+review_scores_checkin+review_scores_location+calculated_host_listings_count+calculated_host_listings_count_private_rooms+reviews_per_month+host_listings_count+minimum_nights+minimum_minimum_nights+minimum_maximum_nights+minimum_nights_avg_ntm+availability_30+availability_90+number_of_reviews+first_review_a + selfie + Oven 
+, data ,method = 'anova', control = rpart.control(cp=-0.01))
+
+summary(tree5)
+ pred3 = predict(tree3, newdata = scoring)
+rmse_tree3 = sqrt(mean((pred3 - data$price)^2)); RMSE = 65.14476
+
+                
+                
+#summary(tree5)
+ pred6 = predict(tree5, data = scoring)
+rmse_tree6 = sqrt(mean((pred6 - data$price)^2)); rmse_tree6
+```
+RMSE 56 on rstudio, and LEADERBOARD RMSE 65
+
+
+
