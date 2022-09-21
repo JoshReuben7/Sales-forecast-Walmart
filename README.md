@@ -1,2 +1,2 @@
 # Sales-forecast-Walmart
-This Project consists of a sales forecasting for Walmart, this purpose of this file was to help understand which regression model is more accurate. Results are as shown.
+This Project consists of a sales Predictions for different project that I have worked on using real world data, this purpose of these projets is to show us how DATA ANALYSIS makes our life much easier. Have a great read.
